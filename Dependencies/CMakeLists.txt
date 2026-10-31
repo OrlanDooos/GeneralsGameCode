@@ -16,6 +16,10 @@ add_subdirectory(Utility)
 add_subdirectory(Bink)
 add_subdirectory(Miles)
 
+if (RTS_USE_D3DX8_STUB)
+    add_subdirectory(D3DX8Stub)
+endif()
+
 if (WIN32)
     add_subdirectory(DbgHelp)
     add_subdirectory(Usp10)
