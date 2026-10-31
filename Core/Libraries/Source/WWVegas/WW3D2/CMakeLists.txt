@@ -5,6 +5,7 @@ set(WW3D2_SRC
     #aabtreebuilder.h
     agg_def.cpp
     agg_def.h
+    d3dmatrixconvert.cpp
     animatedsoundmgr.cpp
     animatedsoundmgr.h
     #animobj.cpp

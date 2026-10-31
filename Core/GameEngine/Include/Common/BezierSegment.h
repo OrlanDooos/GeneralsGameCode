@@ -29,42 +29,82 @@
 
 #pragma once
 
-#include <d3dx8math.h>
 #include "Common/STLTypedefs.h"
 #include "Lib/BaseDefines.h"
 
+// Without deterministic math the retail compatible results come from D3DX. D3DX8 only exists for
+// x86, so x64 always uses the own implementation below.
+#if !USE_DETERMINISTIC_MATH && !(defined(_M_X64) || defined(__x86_64__))
+#define BEZIER_USE_D3DX (1)
+#include <d3dx8math.h>
+#endif
+
 #define USUAL_TOLERANCE 1.0f
+
+// Has the memory layout of D3DXVECTOR4.
+struct BezierVector4
+{
+	float x, y, z, w;
+
+	BezierVector4() {}
+	BezierVector4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+};
+
+// Has the memory layout of D3DXMATRIX.
+struct BezierMatrix
+{
+	float m[4][4];
+
+	BezierMatrix(
+		float m00, float m01, float m02, float m03,
+		float m10, float m11, float m12, float m13,
+		float m20, float m21, float m22, float m23,
+		float m30, float m31, float m32, float m33)
+	{
+		m[0][0] = m00; m[0][1] = m01; m[0][2] = m02; m[0][3] = m03;
+		m[1][0] = m10; m[1][1] = m11; m[1][2] = m12; m[1][3] = m13;
+		m[2][0] = m20; m[2][1] = m21; m[2][2] = m22; m[2][3] = m23;
+		m[3][0] = m30; m[3][1] = m31; m[3][2] = m32; m[3][3] = m33;
+	}
+};
 
 class BezierMath
 {
 public:
-	static void D3DXVec4Transform(D3DXVECTOR4* out, const D3DXVECTOR4* v, const D3DXMATRIX* m)
+	// Row vector times matrix, like D3DXVec4Transform.
+	static void Vec4Transform(BezierVector4* out, const BezierVector4* v, const BezierMatrix* m)
 	{
-#if USE_DETERMINISTIC_MATH
+#if BEZIER_USE_D3DX
+		::D3DXVec4Transform(reinterpret_cast<D3DXVECTOR4*>(out), reinterpret_cast<const D3DXVECTOR4*>(v),
+			reinterpret_cast<const D3DXMATRIX*>(m));
+#else
 		const float x = v->x, y = v->y, z = v->z, w = v->w;
 		out->x = ((x * m->m[0][0] + y * m->m[1][0]) + z * m->m[2][0]) + w * m->m[3][0];
 		out->y = ((x * m->m[0][1] + y * m->m[1][1]) + z * m->m[2][1]) + w * m->m[3][1];
 		out->z = ((x * m->m[0][2] + y * m->m[1][2]) + z * m->m[2][2]) + w * m->m[3][2];
 		out->w = ((x * m->m[0][3] + y * m->m[1][3]) + z * m->m[2][3]) + w * m->m[3][3];
-#else
-		::D3DXVec4Transform(out, v, m);
 #endif
 	}
 
-	static float D3DXVec4Dot(const D3DXVECTOR4* a, const D3DXVECTOR4* b)
+	static float Vec4Dot(const BezierVector4* a, const BezierVector4* b)
 	{
-#if USE_DETERMINISTIC_MATH
-		return ((a->x * b->x + a->y * b->y) + a->z * b->z) + a->w * b->w;
+#if BEZIER_USE_D3DX
+		return ::D3DXVec4Dot(reinterpret_cast<const D3DXVECTOR4*>(a), reinterpret_cast<const D3DXVECTOR4*>(b));
 #else
-		return ::D3DXVec4Dot(a, b);
+		return ((a->x * b->x + a->y * b->y) + a->z * b->z) + a->w * b->w;
 #endif
 	}
 };
 
+#if BEZIER_USE_D3DX
+static_assert(sizeof(BezierVector4) == sizeof(D3DXVECTOR4), "BezierVector4 must match D3DXVECTOR4");
+static_assert(sizeof(BezierMatrix) == sizeof(D3DXMATRIX), "BezierMatrix must match D3DXMATRIX");
+#endif
+
 class BezierSegment
 {
 	protected:
-		static const D3DXMATRIX s_bezBasisMatrix;
+		static const BezierMatrix s_bezBasisMatrix;
 		Coord3D m_controlPoints[4];
 
 	public:	// Constructors
