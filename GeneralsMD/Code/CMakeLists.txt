@@ -37,6 +37,11 @@ add_subdirectory(GameEngineDevice)
 # Contains the main game exe target.
 add_subdirectory(Main)
 
+# The game logic as a library for other engines, and a console program to test it.
+if(WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows")
+    add_subdirectory(LogicLib)
+endif()
+
 if (RTS_BUILD_ZEROHOUR_TOOLS OR RTS_BUILD_ZEROHOUR_EXTRAS)
     add_subdirectory(Tools)
 endif()
