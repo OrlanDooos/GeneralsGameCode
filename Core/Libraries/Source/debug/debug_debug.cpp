@@ -307,7 +307,11 @@ bool Debug::SkipNext()
   // do not implement this function inline, we do need
   // a valid frame pointer here!
   unsigned help;
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_M_X64)
+  // Only identifies the call site, so the truncation to 32 bits is fine: return addresses within
+  // one module never differ in the upper bits only.
+  help=(unsigned)(uintptr_t)_ReturnAddress();
+#elif defined(_MSC_VER)
   __asm
   {
     mov eax,[ebp+4]   // return address
@@ -435,7 +439,9 @@ bool Debug::AssertDone()
           }
           break;
         case IDRETRY:
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_M_X64)
+          __debugbreak();
+#elif defined(_MSC_VER)
           __asm
           {
             int 0x03

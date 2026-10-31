@@ -31,14 +31,14 @@ namespace
 
 typedef BOOL (WINAPI *SymInitialize_t)(HANDLE hProcess, PCSTR UserSearchPath, BOOL fInvadeProcess);
 typedef BOOL (WINAPI *SymCleanup_t)(HANDLE hProcess);
-typedef DWORD (WINAPI *SymLoadModule_t)(HANDLE hProcess, HANDLE hFile, PCSTR ImageName,
-	PCSTR ModuleName, DWORD BaseOfDll, DWORD SizeOfDll);
-typedef DWORD (WINAPI *SymGetModuleBase_t)(HANDLE hProcess, DWORD dwAddr);
-typedef BOOL (WINAPI *SymUnloadModule_t)(HANDLE hProcess, DWORD BaseOfDll);
-typedef BOOL (WINAPI *SymGetSymFromAddr_t)(HANDLE hProcess, DWORD dwAddr, PDWORD pdwDisplacement, PIMAGEHLP_SYMBOL Symbol);
-typedef BOOL (WINAPI *SymGetLineFromAddr_t)(HANDLE hProcess, DWORD dwAddr, PDWORD pdwDisplacement, PIMAGEHLP_LINE Line);
+typedef DWORD_PTR (WINAPI *SymLoadModule_t)(HANDLE hProcess, HANDLE hFile, PCSTR ImageName,
+	PCSTR ModuleName, DWORD_PTR BaseOfDll, DWORD SizeOfDll);
+typedef DWORD_PTR (WINAPI *SymGetModuleBase_t)(HANDLE hProcess, DWORD_PTR dwAddr);
+typedef BOOL (WINAPI *SymUnloadModule_t)(HANDLE hProcess, DWORD_PTR BaseOfDll);
+typedef BOOL (WINAPI *SymGetSymFromAddr_t)(HANDLE hProcess, DWORD_PTR dwAddr, PDWORD_PTR pdwDisplacement, PIMAGEHLP_SYMBOL Symbol);
+typedef BOOL (WINAPI *SymGetLineFromAddr_t)(HANDLE hProcess, DWORD_PTR dwAddr, PDWORD pdwDisplacement, PIMAGEHLP_LINE Line);
 typedef DWORD (WINAPI *SymSetOptions_t)(DWORD SymOptions);
-typedef PVOID (WINAPI *SymFunctionTableAccess_t)(HANDLE hProcess, DWORD AddrBase);
+typedef PVOID (WINAPI *SymFunctionTableAccess_t)(HANDLE hProcess, DWORD_PTR AddrBase);
 typedef BOOL (WINAPI *StackWalk_t)(DWORD MachineType, HANDLE hProcess, HANDLE hThread, LPSTACKFRAME StackFrame,
 	PVOID ContextRecord, PREAD_PROCESS_MEMORY_ROUTINE ReadMemoryRoutine,
 	PFUNCTION_TABLE_ACCESS_ROUTINE FunctionTableAccessRoutine, PGET_MODULE_BASE_ROUTINE GetModuleBaseRoutine,
@@ -92,8 +92,12 @@ public:
 	~ScopedLock() { Lock.get().unlock(); }
 };
 
+// The export name is stringified after macro expansion, because on x64 imagehlp.h maps names such
+// as StackWalk to StackWalk64, and dbghelp.dll for x64 only exports the 64 bit variants.
+#define DBGHELP_STRINGIFY(name) #name
+#define DBGHELP_EXPORT_NAME(name) DBGHELP_STRINGIFY(name)
 #define DBGHELP_RESOLVE(name) \
-	name##Ptr = reinterpret_cast<name##_t>(::GetProcAddress(Module, #name))
+	name##Ptr = reinterpret_cast<name##_t>(::GetProcAddress(Module, DBGHELP_EXPORT_NAME(name)))
 
 static void resolveAll()
 {
@@ -110,6 +114,8 @@ static void resolveAll()
 	DBGHELP_RESOLVE(MiniDumpWriteDump);
 }
 #undef DBGHELP_RESOLVE
+#undef DBGHELP_EXPORT_NAME
+#undef DBGHELP_STRINGIFY
 
 static void freeResources()
 {
@@ -297,12 +303,12 @@ BOOL WINAPI SymCleanup(
 	return FALSE;
 }
 
-DWORD WINAPI SymLoadModule(
+DWORD_PTR WINAPI SymLoadModule(
 	HANDLE hProcess,
 	HANDLE hFile,
 	PCSTR ImageName,
 	PCSTR ModuleName,
-	DWORD BaseOfDll,
+	DWORD_PTR BaseOfDll,
 	DWORD SizeOfDll)
 {
 	ScopedLock lock;
@@ -313,9 +319,9 @@ DWORD WINAPI SymLoadModule(
 	return 0;
 }
 
-DWORD WINAPI SymGetModuleBase(
+DWORD_PTR WINAPI SymGetModuleBase(
 	HANDLE hProcess,
-	DWORD dwAddr)
+	DWORD_PTR dwAddr)
 {
 	ScopedLock lock;
 
@@ -327,7 +333,7 @@ DWORD WINAPI SymGetModuleBase(
 
 BOOL WINAPI SymUnloadModule(
 	HANDLE hProcess,
-	DWORD BaseOfDll)
+	DWORD_PTR BaseOfDll)
 {
 	ScopedLock lock;
 
@@ -339,8 +345,8 @@ BOOL WINAPI SymUnloadModule(
 
 BOOL WINAPI SymGetSymFromAddr(
 	HANDLE hProcess,
-	DWORD dwAddr,
-	PDWORD pdwDisplacement,
+	DWORD_PTR dwAddr,
+	PDWORD_PTR pdwDisplacement,
 	PIMAGEHLP_SYMBOL Symbol)
 {
 	ScopedLock lock;
@@ -353,7 +359,7 @@ BOOL WINAPI SymGetSymFromAddr(
 
 BOOL WINAPI SymGetLineFromAddr(
 	HANDLE hProcess,
-	DWORD dwAddr,
+	DWORD_PTR dwAddr,
 	PDWORD pdwDisplacement,
 	PIMAGEHLP_LINE Line)
 {
@@ -378,7 +384,7 @@ DWORD WINAPI SymSetOptions(
 
 PVOID WINAPI SymFunctionTableAccess(
 	HANDLE hProcess,
-	DWORD AddrBase)
+	DWORD_PTR AddrBase)
 {
 	ScopedLock lock;
 

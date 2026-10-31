@@ -53,7 +53,8 @@ if(MINGW)
 endif()
 
 # Find/Add build dependencies and stubs shared by all projects
-if((WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows") AND ${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+# x64 also needs the DX8 headers: WWMath and parts of GameEngine include d3d8types.h / d3dx8math.h.
+if(WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows")
     include(cmake/dx8.cmake)
 endif()
 
