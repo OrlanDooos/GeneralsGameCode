@@ -32,6 +32,12 @@ class CommandLine
 {
 public:
 
+	// Uses these arguments instead of the ones of the process. Like for main(), argv[0] is the
+	// program name and is skipped. Must be called before the parsing, for example when the engine
+	// runs inside a library whose host process has its own command line. The strings must stay
+	// valid while the engine runs.
+	static void setArguments(int argc, char **argv);
+
 	// Parses startup flags and applies the process working directory.
 	static void parseCommandLineForStartup();
 	static void parseCommandLineForEngineInit();

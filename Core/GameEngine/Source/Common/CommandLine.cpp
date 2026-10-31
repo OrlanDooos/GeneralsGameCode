@@ -1361,11 +1361,28 @@ static CommandLineParam paramsForEngineInit[] =
 
 };
 
+static int s_customArgc = 0;
+static char **s_customArgv = nullptr;
+
+void CommandLine::setArguments(int argc, char **argv)
+{
+	s_customArgc = argc;
+	s_customArgv = argv;
+
+	// Debug logging can parse the startup arguments already during static initialization, which
+	// for a library means the arguments of the host process. Parse again with these arguments.
+	if (TheGlobalData != nullptr)
+	{
+		TheWritableGlobalData->m_commandLineData.m_hasParsedCommandLineForStartup = false;
+		TheWritableGlobalData->m_commandLineData.m_parsedArguments.clear();
+	}
+}
+
 static void parseCommandLine(const CommandLineParam* params, int numParams, BoolVector &parsedArguments)
 {
 	// Startup parsing can run from static constructors, before WinMain.
-	int argc = __argc;
-	char **argv = __argv;
+	int argc = s_customArgv != nullptr ? s_customArgc : __argc;
+	char **argv = s_customArgv != nullptr ? s_customArgv : __argv;
 	if (argc > 0)
 	{
 		// Skip the first argument which is the executable file name.

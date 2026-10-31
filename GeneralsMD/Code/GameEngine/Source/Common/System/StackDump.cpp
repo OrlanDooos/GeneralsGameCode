@@ -569,8 +569,12 @@ void DumpExceptionInfo( unsigned int u, EXCEPTION_POINTERS* e_info )
 	{
 		DOUBLE_DEBUG (("Exception code is %x", e_info->ExceptionRecord->ExceptionCode));
 	}
-	Int *winMainAddr = (Int *)WinMain;
-	DOUBLE_DEBUG(("WinMain at %x", winMainAddr));
+	// The base of the module that contains this code, to match crash addresses with the symbols.
+	// Was the address of WinMain, which does not exist when the engine runs inside a library.
+	HMODULE thisModule = nullptr;
+	::GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		(LPCSTR)&DumpExceptionInfo, &thisModule);
+	DOUBLE_DEBUG(("Module base at %p", (void*)thisModule));
 	/*
 	** Match the exception type with the error string and print it out
 	*/
