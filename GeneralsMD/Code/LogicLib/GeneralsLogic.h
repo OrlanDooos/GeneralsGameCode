@@ -64,7 +64,23 @@ typedef struct GzObjectInfo
 	float    maxHealth;
 	uint32_t flags;           // GZ_OBJECT_FLAG_*
 	char     templateName[64];// For example "AmericaTankCrusader", truncated if longer
+	float    constructionPercent; // 0 to 100 while under construction, 100 otherwise
+	int32_t  productionCount; // Units and upgrades in the production queue
+	float    productionPercent; // 0 to 100 for the first entry of the queue
+	uint32_t targetId;        // The object it attacks, or 0
+	uint32_t lastShotFrame;   // The logic frame of its last shot, or 0
 } GzObjectInfo;
+
+// What an object can build or produce, see gz_get_build_options.
+typedef struct GzBuildOption
+{
+	char     templateName[64];
+	char     displayName[64]; // UTF-8, as the game shows it
+	int32_t  cost;
+	float    buildSeconds;
+	int32_t  isStructure;     // 1 for structures that a dozer constructs, 0 for units
+	int32_t  status;          // GZ_ORDER_OK if it can be ordered now, else why not
+} GzBuildOption;
 
 #define GZ_OBJECT_FLAG_DEAD               0x01 // Effectively dead, but not yet removed
 #define GZ_OBJECT_FLAG_STRUCTURE          0x02
@@ -120,6 +136,11 @@ GZ_API int gz_get_terrain_heights(float x0, float y0, float step, int nx, int ny
 
 #define GZ_NO_WATER (-1.0e9f)
 
+// Samples the color of the ground on the same kind of grid as gz_get_terrain_heights: 3 bytes
+// red, green, blue per point. It is the average color of the terrain texture at the point, as the
+// radar of the game shows it. Returns 0 on success.
+GZ_API int gz_get_terrain_colors(float x0, float y0, float step, int nx, int ny, uint8_t *rgb);
+
 // Returns the index of the player that gz_order_* commands, or -1.
 GZ_API int gz_get_local_player(void);
 
@@ -128,6 +149,23 @@ GZ_API int gz_get_player_money(int playerIndex);
 
 // Fills info for one object. Returns 0 on success, or GZ_ORDER_NO_SUCH_OBJECT.
 GZ_API int gz_get_object(uint32_t id, GzObjectInfo *info);
+
+// Writes the name of the W3D model that the game shows for the object in its current state, for
+// example "AVCrusader" (the file is Art/W3D/AVCrusader.w3d). Returns 0 on success, or -1 if the
+// object has no model, like most projectiles that are drawn as effects.
+GZ_API int gz_get_object_model(uint32_t id, char *name, int nameSize);
+
+// Reads a file of the game, for example "Art/W3D/AVCrusader.w3d", from the folder of the game or
+// its .big archives. With buffer null, returns the size. Otherwise reads up to bufferSize bytes and
+// returns how many. Returns -1 if the file does not exist.
+GZ_API int gz_read_file(const char *path, void *buffer, int bufferSize);
+
+// Fills what an object of the local player can build (a dozer or worker) or produce (a factory),
+// in the order of its command buttons in the game. Returns the number of options filled.
+GZ_API int gz_get_build_options(uint32_t objectId, GzBuildOption *options, int maxOptions);
+
+// Checks whether the builder can construct the structure at (x, y). Returns GZ_ORDER_*.
+GZ_API int gz_check_build_location(uint32_t builderId, const char *templateName, float x, float y, float angle);
 
 // Finds a spot near (x, y) where the builder can construct the structure. Returns GZ_ORDER_*.
 GZ_API int gz_find_build_location(uint32_t builderId, const char *templateName, float x, float y,
@@ -144,6 +182,11 @@ GZ_API int gz_order_attack(uint32_t unitId, uint32_t targetId);
 
 // Orders a unit to move to (x, y). Returns GZ_ORDER_*.
 GZ_API int gz_order_move(uint32_t unitId, float x, float y);
+
+// Orders several units together, like a selected group in the game: they move in formation or
+// attack the same target. Objects that are not of the local player are skipped. Returns GZ_ORDER_*.
+GZ_API int gz_order_group_move(const uint32_t *unitIds, int count, float x, float y);
+GZ_API int gz_order_group_attack(const uint32_t *unitIds, int count, uint32_t targetId);
 
 // Returns the number of the current logic frame.
 GZ_API uint32_t gz_get_frame(void);

@@ -29,6 +29,11 @@
 #include "Common/BuildAssistant.h"
 #include "Common/CommandLine.h"
 #include "Common/CriticalSection.h"
+#include "Common/file.h"
+#include "Common/FileSystem.h"
+#include "Common/ModuleFactory.h"
+#include "GameClient/Drawable.h"
+#include "W3DDevice/GameClient/Module/W3DModelDraw.h"
 #include "Common/FramePacer.h"
 #include "Common/GameEngine.h"
 #include "Common/GameMemory.h"
@@ -45,10 +50,14 @@
 #include "Common/ThingTemplate.h"
 #include "Common/version.h"
 #include "Common/WorkingDirectory.h"
+#include "GameClient/ControlBar.h"
 #include "GameClient/MapUtil.h"
+#include "GameClient/TerrainVisual.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object.h"
 #include "GameLogic/TerrainLogic.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BodyModule.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameNetwork/GameInfo.h"
@@ -134,12 +143,44 @@ void fillObjectInfo(const Object *obj, GzObjectInfo &info)
 		info.flags |= GZ_OBJECT_FLAG_VEHICLE;
 	if (obj->isKindOf(KINDOF_PROJECTILE))
 		info.flags |= GZ_OBJECT_FLAG_PROJECTILE;
+	info.constructionPercent = 100.0f;
 	if (obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
+	{
 		info.flags |= GZ_OBJECT_FLAG_UNDER_CONSTRUCTION;
+		info.constructionPercent = obj->getConstructionPercent();
+	}
 
 	const ThingTemplate *tmpl = obj->getTemplate();
 	if (tmpl != nullptr)
 		strncpy_s(info.templateName, sizeof(info.templateName), tmpl->getName().str(), _TRUNCATE);
+
+	Object *mutableObj = const_cast<Object *>(obj);
+	if (AIUpdateInterface *ai = mutableObj->getAI())
+	{
+		if (const Object *victim = ai->getCurrentVictim())
+			info.targetId = victim->getID();
+	}
+	if (const Weapon *weapon = obj->getCurrentWeapon())
+		info.lastShotFrame = weapon->getLastShotFrame();
+
+	const ProductionUpdateInterface *pu = mutableObj->getProductionUpdateInterface();
+	if (pu != nullptr)
+	{
+		info.productionCount = static_cast<int32_t>(pu->getProductionCount());
+		const ProductionEntry *first = pu->firstProduction();
+		info.productionPercent = first != nullptr ? first->getPercentComplete() : 0.0f;
+	}
+}
+
+void toUtf8(const UnicodeString &text, char *buffer, int bufferSize)
+{
+	buffer[0] = 0;
+	if (text.isEmpty())
+		return;
+	const int written = ::WideCharToMultiByte(CP_UTF8, 0, text.str(), -1, buffer, bufferSize, nullptr, nullptr);
+	if (written <= 0)
+		buffer[0] = 0;
+	buffer[bufferSize - 1] = 0;
 }
 
 // Returns the living object with this id that the local player controls, or sets error.
@@ -185,6 +226,30 @@ void appendSelection(ObjectID id)
 	msg->appendBooleanArgument(TRUE);
 	msg->appendObjectIDArgument(id);
 	TheCommandList->appendMessage(msg);
+}
+
+// Selects the living objects of the local player among the ids as one group. Returns how many.
+int appendGroupSelection(const uint32_t *ids, int count)
+{
+	GameMessage *msg = newInstance(GameMessage)(GameMessage::MSG_CREATE_SELECTED_GROUP);
+	msg->appendBooleanArgument(TRUE);
+	int selected = 0;
+	for (int i = 0; i < count; ++i)
+	{
+		int error;
+		if (findOrderedObject(ids[i], error) != nullptr)
+		{
+			msg->appendObjectIDArgument(static_cast<ObjectID>(ids[i]));
+			++selected;
+		}
+	}
+	if (selected == 0)
+	{
+		deleteInstance(msg);
+		return 0;
+	}
+	TheCommandList->appendMessage(msg);
+	return selected;
 }
 
 const UnsignedInt BUILD_LOCATION_OPTIONS =
@@ -424,6 +489,27 @@ int gz_get_terrain_heights(float x0, float y0, float step, int nx, int ny,
 	return 0;
 }
 
+int gz_get_terrain_colors(float x0, float y0, float step, int nx, int ny, uint8_t *rgb)
+{
+	if (!s_initialized || !TheGameLogic->isInGame() || rgb == nullptr || nx <= 0 || ny <= 0 ||
+		TheTerrainVisual == nullptr)
+		return -1;
+
+	for (int j = 0; j < ny; ++j)
+	{
+		for (int i = 0; i < nx; ++i)
+		{
+			RGBColor color;
+			TheTerrainVisual->getTerrainColorAt(x0 + i * step, y0 + j * step, &color);
+			uint8_t *out = rgb + 3 * (j * nx + i);
+			out[0] = static_cast<uint8_t>(clamp(0, REAL_TO_INT(color.red * 255.0f), 255));
+			out[1] = static_cast<uint8_t>(clamp(0, REAL_TO_INT(color.green * 255.0f), 255));
+			out[2] = static_cast<uint8_t>(clamp(0, REAL_TO_INT(color.blue * 255.0f), 255));
+		}
+	}
+	return 0;
+}
+
 int gz_get_local_player(void)
 {
 	if (!s_initialized || !TheGameLogic->isInGame() || ThePlayerList->getLocalPlayer() == nullptr)
@@ -448,6 +534,111 @@ int gz_get_object(uint32_t id, GzObjectInfo *info)
 		return GZ_ORDER_NO_SUCH_OBJECT;
 	fillObjectInfo(obj, *info);
 	return GZ_ORDER_OK;
+}
+
+int gz_get_object_model(uint32_t id, char *name, int nameSize)
+{
+	if (!s_initialized || name == nullptr || nameSize <= 0 || !TheGameLogic->isInGame())
+		return -1;
+	name[0] = 0;
+	const Object *obj = TheGameLogic->findObjectByID(static_cast<ObjectID>(id));
+	if (obj == nullptr || obj->getTemplate() == nullptr)
+		return -1;
+
+	// The model for the current state of the drawable (damaged, under construction and so on),
+	// like the logic does when it needs the bones of a model.
+	ModelConditionFlags state;
+	state.clear();
+	if (const Drawable *draw = obj->getDrawable())
+		state = draw->getModelConditionFlags();
+
+	const ModuleInfo &modules = obj->getTemplate()->getDrawModuleInfo();
+	for (Int i = 0; i < modules.getCount(); ++i)
+	{
+		const ModuleData *data = modules.getNthData(i);
+		const W3DModelDrawModuleData *w3d = data != nullptr ? data->getAsW3DModelDrawModuleData() : nullptr;
+		if (w3d == nullptr)
+			continue;
+		const AsciiString model = w3d->getBestModelNameForWB(state);
+		if (model.isEmpty())
+			continue;
+		strncpy_s(name, nameSize, model.str(), _TRUNCATE);
+		return 0;
+	}
+	return -1;
+}
+
+int gz_read_file(const char *path, void *buffer, int bufferSize)
+{
+	if (!s_initialized || path == nullptr || TheFileSystem == nullptr)
+		return -1;
+
+	File *file = TheFileSystem->openFile(path, File::READ | File::BINARY);
+	if (file == nullptr)
+		return -1;
+	int result = file->size();
+	if (buffer != nullptr)
+		result = file->read(buffer, min(bufferSize, result));
+	file->close();
+	return result;
+}
+
+int gz_get_build_options(uint32_t objectId, GzBuildOption *options, int maxOptions)
+{
+	int error;
+	Object *obj = findOrderedObject(objectId, error);
+	if (obj == nullptr || options == nullptr || TheControlBar == nullptr)
+		return 0;
+
+	// The command set of the object is what the control bar of the game shows for it.
+	const CommandSet *commandSet = TheControlBar->findCommandSet(obj->getCommandSetString());
+	if (commandSet == nullptr)
+		return 0;
+
+	int count = 0;
+	for (Int i = 0; i < MAX_COMMANDS_PER_SET && count < maxOptions; ++i)
+	{
+		const CommandButton *button = commandSet->getCommandButton(i);
+		if (button == nullptr)
+			continue;
+		const GUICommandType type = button->getCommandType();
+		if (type != GUI_COMMAND_DOZER_CONSTRUCT && type != GUI_COMMAND_UNIT_BUILD)
+			continue;
+		const ThingTemplate *tmpl = button->getThingTemplate();
+		if (tmpl == nullptr)
+			continue;
+
+		GzBuildOption &option = options[count++];
+		memset(&option, 0, sizeof(option));
+		strncpy_s(option.templateName, sizeof(option.templateName), tmpl->getName().str(), _TRUNCATE);
+		toUtf8(tmpl->getDisplayName(), option.displayName, sizeof(option.displayName));
+		if (option.displayName[0] == 0)
+			strncpy_s(option.displayName, sizeof(option.displayName), option.templateName, _TRUNCATE);
+		const Player *player = obj->getControllingPlayer();
+		option.cost = tmpl->calcCostToBuild(player);
+		option.buildSeconds = static_cast<float>(tmpl->calcTimeToBuild(player)) / LOGICFRAMES_PER_SECOND;
+		option.isStructure = type == GUI_COMMAND_DOZER_CONSTRUCT ? 1 : 0;
+		option.status = canMakeToOrderResult(TheBuildAssistant->canMakeUnit(obj, tmpl));
+	}
+	return count;
+}
+
+int gz_check_build_location(uint32_t builderId, const char *templateName, float x, float y, float angle)
+{
+	int error;
+	Object *builder = findOrderedObject(builderId, error);
+	if (builder == nullptr)
+		return error;
+	const ThingTemplate *tmpl = TheThingFactory->findTemplate(AsciiString(templateName));
+	if (tmpl == nullptr)
+		return GZ_ORDER_NO_SUCH_TEMPLATE;
+
+	Coord3D pos;
+	pos.x = x;
+	pos.y = y;
+	pos.z = TheTerrainLogic->getGroundHeight(x, y);
+	return TheBuildAssistant->isLocationLegalToBuild(&pos, tmpl, angle, BUILD_LOCATION_OPTIONS,
+		builder, builder->getControllingPlayer()) == LBC_OK ? GZ_ORDER_OK : GZ_ORDER_ILLEGAL_LOCATION;
 }
 
 int gz_find_build_location(uint32_t builderId, const char *templateName, float x, float y,
@@ -611,6 +802,39 @@ int gz_get_objects(GzObjectInfo *objects, int maxObjects)
 	for (Object *obj = TheGameLogic->getFirstObject(); obj != nullptr && count < maxObjects; obj = obj->getNextObject())
 		fillObjectInfo(obj, objects[count++]);
 	return count;
+}
+
+int gz_order_group_move(const uint32_t *unitIds, int count, float x, float y)
+{
+	if (!s_initialized || s_gameKind != GameKind::Skirmish || !TheGameLogic->isInGame())
+		return GZ_ORDER_NOT_IN_GAME;
+	if (unitIds == nullptr || appendGroupSelection(unitIds, count) == 0)
+		return GZ_ORDER_NO_SUCH_OBJECT;
+
+	Coord3D pos;
+	pos.x = x;
+	pos.y = y;
+	pos.z = TheTerrainLogic->getGroundHeight(x, y);
+	GameMessage *msg = newInstance(GameMessage)(GameMessage::MSG_DO_MOVETO);
+	msg->appendLocationArgument(pos);
+	TheCommandList->appendMessage(msg);
+	return GZ_ORDER_OK;
+}
+
+int gz_order_group_attack(const uint32_t *unitIds, int count, uint32_t targetId)
+{
+	if (!s_initialized || s_gameKind != GameKind::Skirmish || !TheGameLogic->isInGame())
+		return GZ_ORDER_NOT_IN_GAME;
+	const Object *target = TheGameLogic->findObjectByID(static_cast<ObjectID>(targetId));
+	if (target == nullptr || target->isEffectivelyDead())
+		return GZ_ORDER_NO_SUCH_TARGET;
+	if (unitIds == nullptr || appendGroupSelection(unitIds, count) == 0)
+		return GZ_ORDER_NO_SUCH_OBJECT;
+
+	GameMessage *msg = newInstance(GameMessage)(GameMessage::MSG_DO_ATTACK_OBJECT);
+	msg->appendObjectIDArgument(target->getID());
+	TheCommandList->appendMessage(msg);
+	return GZ_ORDER_OK;
 }
 
 void gz_end_game(void)

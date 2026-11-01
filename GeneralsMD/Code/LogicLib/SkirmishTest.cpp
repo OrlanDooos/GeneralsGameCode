@@ -188,6 +188,38 @@ int runTest(const std::string &map)
 	gz_get_object(commandCenter, &cc);
 	printf("Dozer #%u, command center #%u at (%.0f, %.0f)\n", dozer, commandCenter, cc.x, cc.y);
 
+	// The ground color around the command center, to see that the terrain colors come through.
+	uint8_t rgb[3 * 5];
+	if (gz_get_terrain_colors(cc.x - 200.0f, cc.y, 100.0f, 5, 1, rgb) == 0)
+	{
+		printf("Ground colors around the command center:");
+		for (int i = 0; i < 5; ++i)
+			printf(" #%02X%02X%02X", rgb[3 * i], rgb[3 * i + 1], rgb[3 * i + 2]);
+		printf("\n");
+	}
+
+	// The models of the starting objects, and that their files can be read.
+	for (uint32_t id : { dozer, commandCenter })
+	{
+		char model[64];
+		if (gz_get_object_model(id, model, sizeof(model)) == 0)
+		{
+			const std::string path = std::string("Art/W3D/") + model + ".w3d";
+			printf("Object #%u has the model %s, %s is %d bytes\n", id, model, path.c_str(), gz_read_file(path.c_str(), nullptr, 0));
+		}
+		else
+		{
+			printf("Object #%u has no model\n", id);
+		}
+	}
+
+	GzBuildOption options[32];
+	const int optionCount = gz_get_build_options(dozer, options, 32);
+	printf("The dozer can build %d structures:\n", optionCount);
+	for (int i = 0; i < optionCount; ++i)
+		printf("  %-28s %-24s %5d$ %5.1fs %s\n", options[i].templateName, options[i].displayName, options[i].cost,
+			options[i].buildSeconds, orderResultText(options[i].status));
+
 	// 1. Build the structures one after the other.
 	for (int b = 0; b < BUILD_ORDER_COUNT; ++b)
 	{
