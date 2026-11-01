@@ -108,6 +108,18 @@ GZ_API int gz_start_skirmish(const char *mapName, const char *playerFaction, con
 // Simulates one logic frame. Returns one of GZ_STEP_*.
 GZ_API int gz_step(void);
 
+// The playable area of the map, from (0, 0) to (*maxX, *maxY), and the size of one height map
+// cell. Returns 0 on success.
+GZ_API int gz_get_terrain_extent(float *maxX, float *maxY, float *cellSize);
+
+// Samples the ground height on a grid of nx * ny points that starts at (x0, y0) and is step apart,
+// row by row along x. If waterHeights is not null, it gets the water surface height where there
+// is water, or GZ_NO_WATER. Returns 0 on success.
+GZ_API int gz_get_terrain_heights(float x0, float y0, float step, int nx, int ny,
+	float *heights, float *waterHeights);
+
+#define GZ_NO_WATER (-1.0e9f)
+
 // Returns the index of the player that gz_order_* commands, or -1.
 GZ_API int gz_get_local_player(void);
 
@@ -145,7 +157,11 @@ GZ_API int gz_get_object_count(void);
 // Fills up to maxObjects entries and returns how many it filled.
 GZ_API int gz_get_objects(GzObjectInfo *objects, int maxObjects);
 
-// Shuts the engine down.
+// Ends the replay or skirmish, so that another one can start. The engine stays initialized, which
+// suits a host like an editor that starts and stops the game many times in one process.
+GZ_API void gz_end_game(void);
+
+// Ends the game and shuts the engine down.
 GZ_API void gz_shutdown(void);
 
 #ifdef __cplusplus

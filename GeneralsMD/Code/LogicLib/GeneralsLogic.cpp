@@ -33,6 +33,7 @@
 #include "Common/GameEngine.h"
 #include "Common/GameMemory.h"
 #include "Common/GlobalData.h"
+#include "Common/MapObject.h"
 #include "Common/MessageStream.h"
 #include "Common/Money.h"
 #include "Common/Player.h"
@@ -233,7 +234,7 @@ int gz_init(const char *gameDir, int argc, const char *const *args)
 
 int gz_load_replay(const char *replayName)
 {
-	if (!s_initialized || replayName == nullptr)
+	if (!s_initialized || s_gameKind != GameKind::None || replayName == nullptr)
 		return -1;
 
 	if (!TheRecorder->simulateReplay(AsciiString(replayName)))
@@ -383,6 +384,44 @@ int gz_step(void)
 	}
 
 	return GZ_STEP_FINISHED;
+}
+
+int gz_get_terrain_extent(float *maxX, float *maxY, float *cellSize)
+{
+	if (!s_initialized || !TheGameLogic->isInGame() || maxX == nullptr || maxY == nullptr)
+		return -1;
+
+	Region3D extent;
+	TheTerrainLogic->getExtent(&extent);
+	*maxX = extent.hi.x;
+	*maxY = extent.hi.y;
+	if (cellSize != nullptr)
+		*cellSize = MAP_XY_FACTOR;
+	return extent.hi.x > 0.0f && extent.hi.y > 0.0f ? 0 : -2;
+}
+
+int gz_get_terrain_heights(float x0, float y0, float step, int nx, int ny,
+	float *heights, float *waterHeights)
+{
+	if (!s_initialized || !TheGameLogic->isInGame() || heights == nullptr || nx <= 0 || ny <= 0)
+		return -1;
+
+	for (int j = 0; j < ny; ++j)
+	{
+		for (int i = 0; i < nx; ++i)
+		{
+			const Real x = x0 + i * step;
+			const Real y = y0 + j * step;
+			const int index = j * nx + i;
+			heights[index] = TheTerrainLogic->getGroundHeight(x, y);
+			if (waterHeights != nullptr)
+			{
+				Real waterZ = 0.0f;
+				waterHeights[index] = TheTerrainLogic->isUnderwater(x, y, &waterZ) ? waterZ : GZ_NO_WATER;
+			}
+		}
+	}
+	return 0;
 }
 
 int gz_get_local_player(void)
@@ -574,19 +613,31 @@ int gz_get_objects(GzObjectInfo *objects, int maxObjects)
 	return count;
 }
 
-void gz_shutdown(void)
+void gz_end_game(void)
 {
 	if (!s_initialized)
 		return;
 
-	// Ends a skirmish like leaving it from the menu, so that the recorder completes the replay.
-	if (s_gameKind == GameKind::Skirmish && TheGameLogic->isInGame())
+	if (s_gameKind == GameKind::Replay)
+		TheRecorder->stopPlayback();
+
+	// Like leaving the game from the menu. For a skirmish this also makes the recorder complete
+	// the replay.
+	if (TheGameLogic->isInGame())
 	{
 		TheCommandList->appendMessage(newInstance(GameMessage)(GameMessage::MSG_CLEAR_GAME_DATA));
 		TheMessageStream->propagateMessages();
 		TheGameLogic->UPDATE();
 	}
 	s_gameKind = GameKind::None;
+}
+
+void gz_shutdown(void)
+{
+	if (!s_initialized)
+		return;
+
+	gz_end_game();
 
 	// Like the end of GameMain and WinMain.
 	delete TheFramePacer;

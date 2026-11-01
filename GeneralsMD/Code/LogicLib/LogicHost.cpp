@@ -19,12 +19,15 @@
 // LogicHost.cpp: a console program that drives the game logic library through GeneralsLogic.h
 // only, the way another engine would. It plays a replay and prints the world now and then.
 //
-// Usage: generalszh_logichost <gameDir> <replayName> [engine arguments...]
+// Usage: generalszh_logichost <gameDir> <replayName> [--restart] [engine arguments...]
+// --restart ends the first playback after a minute and plays the replay again, the way an editor
+// starts and stops the game in one process.
 
 #include "GeneralsLogic.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <vector>
 
 static void printWorld()
@@ -65,17 +68,36 @@ int main(int argc, char **argv)
 {
 	if (argc < 3)
 	{
-		printf("Usage: %s <gameDir> <replayName> [engine arguments...]\n", argv[0]);
+		printf("Usage: %s <gameDir> <replayName> [--restart] [engine arguments...]\n", argv[0]);
 		return 2;
 	}
 
 	// Unbuffered, so that the output is not lost if the engine ends the process.
 	setvbuf(stdout, nullptr, _IONBF, 0);
 
-	if (gz_init(argv[1], argc - 3, argv + 3) != 0)
+	const bool restart = argc > 3 && strcmp(argv[3], "--restart") == 0;
+	const int firstEngineArg = restart ? 4 : 3;
+
+	if (gz_init(argv[1], argc - firstEngineArg, argv + firstEngineArg) != 0)
 	{
 		printf("gz_init failed\n");
 		return 1;
+	}
+
+	if (restart)
+	{
+		if (gz_load_replay(argv[2]) != 0)
+		{
+			printf("gz_load_replay failed\n");
+			gz_shutdown();
+			return 1;
+		}
+		while (gz_get_frame() < 60 * GZ_LOGIC_FRAMES_PER_SECOND && gz_step() == GZ_STEP_OK)
+		{
+		}
+		printWorld();
+		gz_end_game();
+		printf("Ended the first playback, playing again\n");
 	}
 
 	if (gz_load_replay(argv[2]) != 0)
